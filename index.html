@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#eeeae1" />
+    <title>我们的家 · 3D 虚拟看房</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23374435'/%3E%3Cpath d='M14 32 32 16 50 32M20 28v22h24V28M28 50V36h8v14' fill='none' stroke='%23efe8db' stroke-width='4' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <main id="app">
+      <div id="viewport" aria-label="三维房屋场景"></div>
+      <header class="brand panel">
+        <span class="brand-mark" aria-hidden="true">⌂</span>
+        <div><div class="eyebrow">OUR HOME</div><h1>我们的家</h1><p class="area-info"><span id="building-area">建面 106.53㎡</span><span id="interior-area">套内建面 82.33㎡</span></p></div>
+        <span class="brand-line"></span>
+        <div class="room-info"><span class="eyebrow" id="view-label">自由行走</span><strong id="room-name">客厅</strong></div>
+      </header>
+
+      <aside class="map-panel panel" id="map-panel">
+        <div class="map-header"><span>户型导览</span><button id="map-toggle" type="button" aria-expanded="true" aria-label="收起小地图">−</button></div>
+        <canvas id="minimap" width="500" height="520" aria-label="显示房间、位置、北向和太阳方向的户型图"></canvas>
+        <div class="map-foot"><span><i class="legend-dot person"></i>你的位置</span><span><i class="legend-dot sun"></i>太阳方向</span></div>
+      </aside>
+
+      <nav class="view-tools panel" aria-label="看房操作">
+        <button id="mode-button" type="button"><span class="button-icon">▧</span><span id="mode-text">鸟瞰全屋</span><kbd>M</kbd></button>
+        <div class="tool-divider"></div>
+        <label class="room-select"><span class="button-icon">⌖</span><select id="room-select" aria-label="选择房间瞬移"><option value="">去一个房间</option></select></label>
+        <div class="tool-divider"></div>
+        <button id="settings-button" type="button" aria-expanded="false"><span class="button-icon">☷</span><span>设置</span></button>
+      </nav>
+
+      <section class="settings-panel panel" id="settings-panel" hidden>
+        <div class="settings-heading"><strong>日照与户型</strong><button id="settings-close" type="button" aria-label="关闭设置">×</button></div>
+        <form id="settings-form">
+          <div class="coordinates"><label>纬度 °N<input id="latitude" type="number" min="-89.9" max="89.9" step="0.001" required /></label><label>经度 °E<input id="longitude" type="number" min="-180" max="180" step="0.001" required /></label></div>
+          <div class="coordinates"><label>时区 UTC 偏移<input id="utc-offset" type="number" min="-12" max="14" step="0.5" required /></label><label>图上方方位角 °<input id="orientation" type="number" min="0" max="360" step="1" required /></label></div>
+          <p class="field-note">0° 北 · 90° 东 · 180° 南 · 270° 西</p>
+          <button class="apply-button" type="submit">应用设置</button>
+        </form>
+        <div class="model-notes"><p><strong>图纸建筑面积 106.53㎡</strong><br />套内建筑面积 82.33㎡ · 净高暂定 2.8m</p><p>阳台朝南，户型图上方朝北。日照坐标使用城市级近似值。</p><p>晴空日照仅计算房屋自身遮挡；所在楼层、周边楼高与间距未确认。</p><details><summary>查看尺寸与估算说明</summary><ul id="assumptions"></ul></details></div>
+      </section>
+
+      <div class="entry-prompt" id="entry-prompt">
+        <span class="prompt-line"></span><div><span class="eyebrow">TAKE A WALK</span><button id="enter-button" type="button">走进我们的家 <span>↗</span></button><p id="entry-instruction">点击锁定鼠标 · WASD 行走 · Esc 退出</p></div>
+      </div>
+      <div class="crosshair" id="crosshair" hidden></div>
+      <div class="desktop-help" id="desktop-help"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 行走</span><span><kbd>Shift</kbd> 加速</span><span><kbd>空格</kbd> 日照延时</span></div>
+      <div class="touch-controls" id="touch-controls" hidden>
+        <div class="joystick" id="joystick" aria-label="行走摇杆"><div class="joystick-ring"></div><div class="joystick-knob" id="joystick-knob"></div><span>行走</span></div>
+        <div class="touch-look-note">右侧拖动 · 看四周</div>
+        <button id="sprint-button" type="button" aria-label="按住加速">加速 <span>↑↑</span></button>
+      </div>
+
+      <footer class="sun-panel panel" id="sun-panel" aria-label="日照控制">
+        <div class="sun-heading"><div class="sun-title"><span class="sun-icon" aria-hidden="true">☀</span><div><span class="eyebrow">LIGHT THROUGH THE DAY</span><strong id="sun-title-text">看见阳光的轨迹</strong></div></div><div class="sun-heading-actions"><div class="sun-reading"><time id="time-display">14:00</time><span id="sun-status">计算太阳位置</span></div><button id="sun-toggle" type="button" aria-expanded="true" aria-controls="sun-controls" aria-label="收起日照面板">−</button></div></div>
+        <div id="sun-controls">
+        <div class="time-controls"><button id="play-button" type="button" aria-label="播放一天日照">▶</button><div class="timeline"><input id="time-slider" type="range" min="300" max="1200" step="5" value="840" aria-label="日照时间" /><div class="time-ticks"><span>05:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span></div></div><label class="date-control"><span>日期</span><input id="date-input" type="date" required aria-label="日照日期" /></label></div>
+        <div class="sun-foot"><span id="location-label">当地时间 UTC+8 · 南向阳台</span><span>晴空模拟 · 周边楼栋遮挡未计入</span></div>
+        </div>
+      </footer>
+      <div id="toast" role="status" hidden></div>
+      <div class="loading-screen" id="loading"><span class="loading-symbol">⌂</span><h2>我们的家</h2><p>正在准备你的家…</p><div class="loading-track"><span></span></div></div>
+      <div class="error-screen" id="error-screen" hidden><h2>暂时无法打开房屋</h2><p id="error-message"></p><button type="button" onclick="location.reload()">重新加载</button></div>
+    </main>
+    <script>
+      function showHouseError(message) {
+        if (document.pointerLockElement) document.exitPointerLock();
+        document.getElementById('app').classList.remove('walking');
+        document.getElementById('loading').hidden = true;
+        document.getElementById('error-screen').hidden = false;
+        document.getElementById('error-message').textContent = message;
+      }
+      window.addEventListener('error', function (event) {
+        if (event.error) showHouseError(event.error.message);
+        else if (event.target instanceof HTMLScriptElement) showHouseError('脚本资源加载失败，请检查静态资源路径和网络。');
+      }, true);
+      window.addEventListener('unhandledrejection', function (event) { showHouseError(event.reason?.message || String(event.reason)); });
+    </script>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
