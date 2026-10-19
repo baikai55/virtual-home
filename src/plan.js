@@ -12,6 +12,18 @@ export function polygonBounds(polygon) {
   return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
 }
 
+export function polygonArea(polygon) {
+  let area = 0;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    area += polygon[j][0] * polygon[i][1] - polygon[i][0] * polygon[j][1];
+  }
+  return Math.abs(area) / 2;
+}
+
+export function roomArea(room) {
+  return polygonArea(roomPolygon(room));
+}
+
 export function pointInPolygon(x, y, polygon) {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {

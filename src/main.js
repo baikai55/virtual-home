@@ -26,22 +26,31 @@ try {
   scene.fog = new THREE.Fog('#c8d0b9', 90, 700);
   const camera = new THREE.PerspectiveCamera(mobile ? 72 : 73, viewport.clientWidth / viewport.clientHeight, .05, 6500);
   const house = buildHouse(scene, plan);
+  let needsRender = true;
+  const invalidate = () => { needsRender = true; };
   const sun = createSunSystem(scene, renderer, house, plan.settings, mobile);
-  const ui = createInterface(plan, camera, mobile, scene);
+  const ui = createInterface(plan, camera, mobile, scene, invalidate);
   const movement = createMovement(camera, renderer, plan, house, mobile, { onActive: ui.onActive, onMode: ui.onMode, onMessage: ui.message, onPlayback: ui.togglePlayback });
   ui.bind(movement, sun);
   renderer.domElement.addEventListener('webglcontextlost', event => { event.preventDefault(); window.showHouseError('图形上下文已丢失，请重新加载页面。'); });
   window.addEventListener('resize', () => {
     camera.aspect = viewport.clientWidth / viewport.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(viewport.clientWidth, viewport.clientHeight, false);
-    movement.resize();
+    movement.resize(); invalidate();
   });
-  let previousTime = null;
+  const renderedMatrix = new THREE.Matrix4();
+  let hasRendered = false, previousTime = null;
   renderer.setAnimationLoop(time => {
     const delta = previousTime === null ? 0 : Math.min((time - previousTime) / 1000, .05); previousTime = time;
-    movement.update(delta); ui.update(delta); renderer.render(scene, camera);
+    movement.update(delta); camera.updateMatrixWorld(); ui.update(delta);
+    if (needsRender || !hasRendered || !renderedMatrix.equals(camera.matrixWorld)) {
+      renderer.render(scene, camera);
+      renderedMatrix.copy(camera.matrixWorld); hasRendered = true; needsRender = false;
+    }
   });
   renderer.render(scene, camera);
+  renderedMatrix.copy(camera.matrixWorld); hasRendered = true; needsRender = false;
   document.getElementById('loading').hidden = true;
+  if (import.meta.env.PROD && 'serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 } catch (error) {
   window.showHouseError(error.message);
   console.error(error);

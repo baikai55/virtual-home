@@ -1,0 +1,17 @@
+{
+  "name": "我们的家 · 3D 虚拟看房",
+  "short_name": "我们的家",
+  "description": "三室两厅一卫的浏览器 3D 住宅，支持第一人称行走、手机触控、鸟瞰和日照模拟。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ebe7dd",
+  "theme_color": "#eeeae1",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

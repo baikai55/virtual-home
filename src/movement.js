@@ -27,7 +27,7 @@ export function createMovement(camera, renderer, plan, house, mobile, callbacks)
   const sprint = document.getElementById('sprint-button');
   let joystickId = null, lookId = null, lookX = 0, lookY = 0;
   let stickX = 0, stickY = 0, sprinting = false;
-  let active = false, overview = false, lockPending = false, lockRequested = false, overviewFit = 1;
+  let active = false, overview = false, planMode = false, lockPending = false, lockRequested = false, overviewFit = 1;
   const savedPosition = new THREE.Vector3();
   const savedQuaternion = new THREE.Quaternion();
 
@@ -83,22 +83,35 @@ export function createMovement(camera, renderer, plan, house, mobile, callbacks)
     overviewFit = nextFit; orbit.update();
   }
 
+  function applyView(view) {
+    orbit.target.set(view.targetX, view.targetHeight ?? -.55, -view.targetY);
+    camera.position.set(view.x, view.height, -view.y);
+    overviewFit = overviewFitFactor();
+    camera.position.sub(orbit.target).multiplyScalar(overviewFit).add(orbit.target); orbit.update();
+  }
+  function leaveOverview() {
+    planMode = false; overview = false; house.setCutaway(false); orbit.enabled = false;
+    camera.position.copy(savedPosition); camera.quaternion.copy(savedQuaternion);
+    if (mobile) { active = true; callbacks.onActive(true); }
+    callbacks.onMode(false, false);
+  }
   function setOverview(enabled) {
-    if (enabled === overview) return;
-    if (enabled) { savedPosition.copy(camera.position); savedQuaternion.copy(camera.quaternion); pause(); }
-    overview = enabled; house.setCutaway(enabled); orbit.enabled = enabled;
+    if (enabled === overview && !planMode) return;
+    if (!enabled) { leaveOverview(); return; }
+    if (!overview) { savedPosition.copy(camera.position); savedQuaternion.copy(camera.quaternion); pause(); }
+    planMode = false; overview = true; house.setCutaway(true); orbit.enabled = true;
     renderer.shadowMap.needsUpdate = true;
-    if (enabled) {
-      const view = plan.settings.overview;
-      orbit.target.set(view.targetX, -.55, -view.targetY);
-      camera.position.set(view.x, view.height, -view.y);
-      overviewFit = overviewFitFactor();
-      camera.position.sub(orbit.target).multiplyScalar(overviewFit).add(orbit.target); orbit.update();
-    } else {
-      camera.position.copy(savedPosition); camera.quaternion.copy(savedQuaternion);
-      if (mobile) { active = true; callbacks.onActive(true); }
-    }
-    callbacks.onMode(enabled);
+    applyView(plan.settings.overview);
+    callbacks.onMode(true, false);
+  }
+  function setPlanView(enabled) {
+    if (enabled === planMode) return;
+    if (!enabled) { leaveOverview(); return; }
+    if (!overview) { savedPosition.copy(camera.position); savedQuaternion.copy(camera.quaternion); pause(); }
+    planMode = true; overview = true; house.setCutaway(true); orbit.enabled = true;
+    renderer.shadowMap.needsUpdate = true;
+    applyView(plan.settings.planView);
+    callbacks.onMode(true, true);
   }
 
   function teleport(roomId) {
@@ -183,5 +196,5 @@ export function createMovement(camera, renderer, plan, house, mobile, callbacks)
     }
     camera.position.set(x, plan.settings.eyeHeight, -y);
   }
-  return { start, pause, setOverview, teleport, update, resize, get overview() { return overview; }, get active() { return active; }, get playerPosition() { return overview ? savedPosition : camera.position; }, get playerQuaternion() { return overview ? savedQuaternion : camera.quaternion; } };
+  return { start, pause, setOverview, setPlanView, teleport, update, resize, get overview() { return overview; }, get plan() { return planMode; }, get active() { return active; }, get playerPosition() { return overview ? savedPosition : camera.position; }, get playerQuaternion() { return overview ? savedQuaternion : camera.quaternion; } };
 }
