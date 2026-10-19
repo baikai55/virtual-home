@@ -8,13 +8,43 @@ const TIMELAPSE_SECONDS = 30;
 const floorColors = { wood: '#e1d9c6', kitchen: '#d6d9cd', stone: '#cad4ce', balcony: '#d8ddce' };
 const forwardVector = new THREE.Vector3();
 
-export function createInterface(plan, camera, mobile) {
+export function roomSizeText(room) {
+  if (room.w !== undefined && room.h !== undefined) return `${room.w}×${room.h}m`;
+  const bounds = polygonBounds(room.polygon);
+  return `${(bounds.maxX - bounds.minX).toFixed(1)}×${(bounds.maxY - bounds.minY).toFixed(1)}m`;
+}
+
+function roomCenter(room) {
+  if (room.w !== undefined && room.h !== undefined) return { x: room.x + room.w / 2, z: -(room.y + room.h / 2) };
+  const bounds = polygonBounds(room.polygon);
+  return { x: (bounds.minX + bounds.maxX) / 2, z: -(bounds.minY + bounds.maxY) / 2 };
+}
+
+function createDimensionLabel(scene, room) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 256;
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'rgba(249, 248, 242, .94)'; context.fillRect(8, 8, 496, 240);
+  context.strokeStyle = 'rgba(82, 107, 80, .3)'; context.lineWidth = 4; context.strokeRect(8, 8, 496, 240);
+  context.textAlign = 'center'; context.textBaseline = 'middle';
+  context.fillStyle = '#354037'; context.font = '42px "Microsoft YaHei", sans-serif'; context.fillText(room.name, 256, 83);
+  context.fillStyle = '#8a8f80'; context.font = '30px "Microsoft YaHei", sans-serif'; context.fillText(roomSizeText(room), 256, 169);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(material); const center = roomCenter(room);
+  sprite.position.set(center.x, 2.2, center.z); sprite.scale.set(1.6, .8, 1); sprite.visible = false; scene.add(sprite);
+  return sprite;
+}
+
+export function createInterface(plan, camera, mobile, scene) {
   const get = id => document.getElementById(id);
   const map = get('minimap'); const ctx = map.getContext('2d');
   const slider = get('time-slider'); const date = get('date-input');
   const play = get('play-button'); const roomSelect = get('room-select');
+  const dimensionsToggle = get('dimensions-toggle');
+  const dimensionLabels = plan.rooms.map(room => createDimensionLabel(scene, room));
   const settings = plan.settings;
-  let movement, sunSystem, playing = false, minutes = settings.initialTimeMinutes;
+  let movement, sunSystem, playing = false, dimensionsVisible = false, minutes = settings.initialTimeMinutes;
   let mapElapsed = 0, solarElapsed = 0, toastTimer, lastRoomId;
   date.value = localDateString(settings.utcOffsetHours); slider.value = minutes;
   get('latitude').value = settings.latitude; get('longitude').value = settings.longitude;
@@ -24,7 +54,7 @@ export function createInterface(plan, camera, mobile) {
   if (mobile) { get('touch-controls').hidden = false; get('desktop-help').hidden = true; get('entry-instruction').textContent = '左侧摇杆行走 · 右侧拖动看四周'; }
   plan.rooms.forEach((room, index) => {
     const option = document.createElement('option'); option.value = room.id;
-    option.textContent = `${index < 9 ? index + 1 + ' · ' : ''}${room.name}`; roomSelect.append(option);
+    option.textContent = `${index < 9 ? index + 1 + ' · ' : ''}${room.name} ${roomSizeText(room)}`; roomSelect.append(option);
   });
   plan.assumptions.forEach(note => { const li = document.createElement('li'); li.textContent = note; get('assumptions').append(li); });
   const mapBounds = polygonBounds(plan.rooms.flatMap(roomPolygon));
@@ -60,6 +90,7 @@ export function createInterface(plan, camera, mobile) {
       ctx.fillStyle = floorColors[room.floor]; ctx.fill();
       const bounds = polygonBounds(polygon); const [x, y] = mapPoint((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2);
       ctx.fillStyle = '#858b79'; ctx.font = '17px "Microsoft YaHei", sans-serif'; ctx.textAlign = 'center'; ctx.fillText(room.name, x, y + 5);
+      ctx.fillStyle = '#8a8f80'; ctx.font = '13px "Microsoft YaHei", sans-serif'; ctx.fillText(roomSizeText(room), x, y + 21);
     }
     ctx.lineCap = 'square';
     for (const wall of plan.walls) {
@@ -96,10 +127,18 @@ export function createInterface(plan, camera, mobile) {
     ctx.textAlign = 'center'; ctx.fillStyle = '#a3a797'; ctx.font = '14px "Microsoft YaHei"'; ctx.fillText('南向阳台', map.width / 2, map.height - 14);
   }
 
+  function setDimensionsVisible(visible) {
+    dimensionsVisible = visible;
+    dimensionLabels.forEach(label => { label.visible = visible; });
+    dimensionsToggle.setAttribute('aria-pressed', String(visible));
+    dimensionsToggle.setAttribute('aria-label', visible ? '隐藏尺寸标注' : '显示尺寸标注');
+  }
+
   function bind(movementController, solarSystem) {
     movement = movementController; sunSystem = solarSystem;
     get('enter-button').addEventListener('click', () => { get('enter-button').blur(); movement.start(); });
     get('mode-button').addEventListener('click', () => { movement.setOverview(!movement.overview); get('mode-button').blur(); });
+    dimensionsToggle.addEventListener('click', () => { setDimensionsVisible(!dimensionsVisible); dimensionsToggle.blur(); });
     roomSelect.addEventListener('change', () => { if (roomSelect.value) { movement.teleport(roomSelect.value); roomSelect.value = ''; roomSelect.blur(); } });
     const settingsPanel = get('settings-panel');
     get('settings-button').addEventListener('click', () => { movement.pause(); settingsPanel.hidden = !settingsPanel.hidden; get('settings-button').setAttribute('aria-expanded', String(!settingsPanel.hidden)); });

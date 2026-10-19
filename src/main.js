@@ -24,10 +24,10 @@ try {
   viewport.append(renderer.domElement);
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog('#c8d0b9', 90, 700);
-  const camera = new THREE.PerspectiveCamera(mobile ? 72 : 65, viewport.clientWidth / viewport.clientHeight, .05, 6500);
+  const camera = new THREE.PerspectiveCamera(mobile ? 72 : 73, viewport.clientWidth / viewport.clientHeight, .05, 6500);
   const house = buildHouse(scene, plan);
   const sun = createSunSystem(scene, renderer, house, plan.settings, mobile);
-  const ui = createInterface(plan, camera, mobile);
+  const ui = createInterface(plan, camera, mobile, scene);
   const movement = createMovement(camera, renderer, plan, house, mobile, { onActive: ui.onActive, onMode: ui.onMode, onMessage: ui.message, onPlayback: ui.togglePlayback });
   ui.bind(movement, sun);
   renderer.domElement.addEventListener('webglcontextlost', event => { event.preventDefault(); window.showHouseError('图形上下文已丢失，请重新加载页面。'); });

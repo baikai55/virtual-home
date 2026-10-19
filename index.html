@@ -26,6 +26,8 @@
       <nav class="view-tools panel" aria-label="看房操作">
         <button id="mode-button" type="button"><span class="button-icon">▧</span><span id="mode-text">鸟瞰全屋</span><kbd>M</kbd></button>
         <div class="tool-divider"></div>
+        <button id="dimensions-toggle" type="button" aria-pressed="false" aria-label="显示尺寸标注"><span class="button-icon">⌗</span><span>尺寸标注</span></button>
+        <div class="tool-divider"></div>
         <label class="room-select"><span class="button-icon">⌖</span><select id="room-select" aria-label="选择房间瞬移"><option value="">去一个房间</option></select></label>
         <div class="tool-divider"></div>
         <button id="settings-button" type="button" aria-expanded="false"><span class="button-icon">☷</span><span>设置</span></button>
@@ -74,7 +76,10 @@
       }
       window.addEventListener('error', function (event) {
         if (event.error) showHouseError(event.error.message);
-        else if (event.target instanceof HTMLScriptElement) showHouseError('脚本资源加载失败，请检查静态资源路径和网络。');
+        else if (event.target instanceof HTMLScriptElement) {
+          var src = event.target.src || '';
+          if (src.indexOf('/assets/') !== -1) showHouseError('脚本资源加载失败，请检查静态资源路径和网络。');
+        }
       }, true);
       window.addEventListener('unhandledrejection', function (event) { showHouseError(event.reason?.message || String(event.reason)); });
     </script>
