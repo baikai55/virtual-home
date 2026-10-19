@@ -35,6 +35,7 @@
   <body>
     <main id="app">
       <div id="viewport" aria-label="三维房屋场景"></div>
+      <svg class="measure-overlay" id="measure-overlay" aria-hidden="true" hidden></svg>
       <header class="brand panel">
         <span class="brand-mark" aria-hidden="true">⌂</span>
         <div><div class="eyebrow">OUR HOME</div><h1>我们的家</h1><p class="area-info"><span id="building-area">建面 106.53㎡</span><span id="interior-area">套内 82.33㎡</span></p></div>
@@ -98,10 +99,12 @@
         <span class="prompt-line"></span><div><span class="eyebrow">TAKE A WALK</span><button id="enter-button" type="button">走进我们的家 <span>↗</span></button><p id="entry-instruction">点击锁定鼠标 · WASD 行走 · Esc 退出</p></div>
       </div>
       <div class="crosshair" id="crosshair" hidden></div>
-      <div class="desktop-help" id="desktop-help"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 行走</span><span><kbd>Shift</kbd> 加速</span><span><kbd>空格</kbd> 日照延时</span></div>
+      <div class="aim-hint" id="aim-hint" hidden>点击量尺寸</div>
+      <div class="measure-readout" id="measure-readout" hidden></div>
+      <div class="desktop-help" id="desktop-help"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 行走</span><span><kbd>Shift</kbd> 加速</span><span><kbd>点击</kbd> 量家具</span><span><kbd>空格</kbd> 日照延时</span></div>
       <div class="touch-controls" id="touch-controls" hidden>
         <div class="joystick" id="joystick" aria-label="行走摇杆"><div class="joystick-ring"></div><div class="joystick-knob" id="joystick-knob"></div><span>行走</span></div>
-        <div class="touch-look-note">右侧拖动 · 看四周</div>
+        <div class="touch-look-note">右侧拖动看四周<br />轻点家具量尺寸</div>
         <button id="sprint-button" type="button" aria-label="按住加速">加速 <span>↑↑</span></button>
       </div>
 

@@ -8,6 +8,9 @@ const TIMELAPSE_SECONDS = 30;
 const LABEL_SIZE = .055;
 const FURNITURE_LABEL_SIZE = .036;
 const FURNITURE_LABEL_HEIGHT = 1.32;
+const MEASURE_RANGE = 4;
+const MEASURE_GAP = .16;
+const SVG_NS = 'http://www.w3.org/2000/svg';
 const floorColors = { wood: '#e1d9c6', kitchen: '#d6d9cd', stone: '#cad4ce', balcony: '#d8ddce' };
 const furnitureNames = {
   rug: '地毯', sofa: '沙发', coffeeTable: '茶几', tvConsole: '电视柜', armchair: '单人椅',
@@ -20,12 +23,44 @@ const forwardVector = new THREE.Vector3();
 const projectedLabel = new THREE.Vector3();
 const cameraRight = new THREE.Vector3();
 const cameraUp = new THREE.Vector3();
+const measureProjected = new THREE.Vector3();
+const measureCenter = new THREE.Vector3();
+const measureDirection = new THREE.Vector3();
+const measureForward = new THREE.Vector3();
+const measureNdc = new THREE.Vector2();
 
 const oneDecimal = value => (Math.round(value * 10) / 10).toFixed(1);
 const furnitureName = type => furnitureNames[type] || type;
 const furnitureSizeText = item => item.type === 'roundTable'
   ? `Ø${oneDecimal(item.w)} m`
   : `${oneDecimal(item.w)} × ${oneDecimal(item.d)} m`;
+
+function furnitureWorldPoint(item, localX, localZ, height = .02) {
+  const angle = radians(item.rotation || 0), cos = Math.cos(angle), sin = Math.sin(angle);
+  return new THREE.Vector3(
+    item.x + localX * cos + localZ * sin,
+    height,
+    -item.y - localX * sin + localZ * cos,
+  );
+}
+
+function footprintLocalPoints(item) {
+  if (item.type === 'roundTable') {
+    const radius = item.w / 2;
+    return Array.from({ length: 32 }, (_, index) => {
+      const angle = index / 32 * Math.PI * 2;
+      return [Math.cos(angle) * radius, Math.sin(angle) * radius];
+    });
+  }
+  const halfW = item.w / 2, halfD = item.d / 2;
+  return [[-halfW, -halfD], [halfW, -halfD], [halfW, halfD], [-halfW, halfD], [-halfW, -halfD]];
+}
+
+function cameraLocalPosition(item, position) {
+  const angle = radians(item.rotation || 0), cos = Math.cos(angle), sin = Math.sin(angle);
+  const dx = position.x - item.x, dz = position.z + item.y;
+  return { x: dx * cos - dz * sin, z: dx * sin + dz * cos };
+}
 
 function roomModelInfo(room) {
   const polygon = roomPolygon(room);
@@ -105,6 +140,11 @@ function createFurnitureLabel(scene, item) {
 export function createInterface(plan, camera, mobile, scene, invalidate = () => {}) {
   const get = id => document.getElementById(id);
   const viewport = get('viewport');
+  const measureOverlay = get('measure-overlay');
+  const aimHint = get('aim-hint');
+  const measureReadout = get('measure-readout');
+  const crosshair = get('crosshair');
+  const canvas = viewport.querySelector('canvas');
   const mapPanel = get('map-panel');
   const mapBackdrop = get('map-backdrop');
   const mapExpand = get('map-expand');
@@ -127,6 +167,21 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   }
   const furnitureLabels = labelledFurniture.map(item => createFurnitureLabel(scene, item));
   const orderedFurnitureLabels = furnitureLabels.slice().sort((a, b) => b.userData.area - a.userData.area);
+  const pickables = [], occluders = [];
+  for (const item of plan.furniture) {
+    const group = scene.getObjectByName(item.id);
+    if (!group) continue;
+    group.traverse(child => {
+      if (!child.isMesh) return;
+      child.userData.furnitureItem = item;
+      pickables.push(child);
+    });
+  }
+  scene.traverse(child => {
+    if (child.isMesh && !child.userData.furnitureItem) occluders.push(child);
+  });
+  const measureRaycaster = new THREE.Raycaster();
+  const measureTargets = pickables.concat(occluders);
   const settings = plan.settings;
   const defaultSettings = { ...settings };
   const settingsKey = 'virtual-home-sun-settings';
@@ -144,6 +199,11 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   let movement, sunSystem, playing = false, dimensionsVisible = false, minutes = settings.initialTimeMinutes;
   let mapElapsed = 0, solarElapsed = 0, toastTimer, lastRoomId, hoverRoomId = null;
   let dimensionLayer = mobile ? 'furniture' : 'all';
+  let measureItem = null, measureState = null, aimElapsed = 0, tapStart = null;
+  let measureViewWidth = 0, measureViewHeight = 0, measureCameraKnown = false;
+  let aimCameraKnown = false;
+  const measureCameraMatrix = new THREE.Matrix4();
+  const aimCameraMatrix = new THREE.Matrix4();
   date.value = localDateString(settings.utcOffsetHours); slider.value = minutes;
   get('latitude').value = settings.latitude; get('longitude').value = settings.longitude;
   get('utc-offset').value = settings.utcOffsetHours; get('orientation').value = settings.planUpAzimuthDeg;
@@ -188,6 +248,260 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   const offsetX = (map.width - (mapBounds.maxX - mapBounds.minX) * scale) / 2;
   const offsetY = 55;
   const mapPoint = (x, y) => [offsetX + (x - mapBounds.minX) * scale, offsetY + (mapBounds.maxY - y) * scale];
+
+  function createMeasureNode(tag, className) {
+    const node = document.createElementNS(SVG_NS, tag);
+    node.setAttribute('class', className);
+    measureOverlay.append(node);
+    return node;
+  }
+  function setMeasureOverlayVisible(visible) {
+    if (visible) measureOverlay.removeAttribute('hidden');
+    else measureOverlay.setAttribute('hidden', '');
+  }
+  function removeMeasureNodes() {
+    measureOverlay.replaceChildren();
+  }
+  function buildMeasureState(item) {
+    removeMeasureNodes();
+    const round = item.type === 'roundTable';
+    const lineCount = round ? 1 : 2;
+    const state = { item, round, footprint: createMeasureNode('polyline', 'measure-footprint'), lines: [], ticks: [], extensions: [], labels: [] };
+    for (let index = 0; index < lineCount; index++) state.lines.push(createMeasureNode('line', 'measure-line'));
+    for (let index = 0; index < lineCount * 2; index++) state.ticks.push(createMeasureNode('line', 'measure-tick'));
+    if (!round) for (let index = 0; index < 4; index++) state.extensions.push(createMeasureNode('line', 'measure-ext'));
+    const widthLabel = createMeasureNode('text', 'measure-label');
+    widthLabel.textContent = round
+      ? `${furnitureName(item.type)} · Ø${oneDecimal(item.w)} m`
+      : `${furnitureName(item.type)} · 宽 ${oneDecimal(item.w)} m`;
+    state.labels.push(widthLabel);
+    if (!round) {
+      const depthLabel = createMeasureNode('text', 'measure-label');
+      depthLabel.textContent = `深 ${oneDecimal(item.d)} m`;
+      state.labels.push(depthLabel);
+    }
+    measureState = state;
+  }
+
+  function projectMeasure(point, width, height) {
+    measureProjected.copy(point).project(camera);
+    return {
+      x: (measureProjected.x * .5 + .5) * width,
+      y: (-measureProjected.y * .5 + .5) * height,
+      visible: measureProjected.z >= -1 && measureProjected.z <= 1,
+    };
+  }
+  function setProjectedLine(element, start, end, width, height) {
+    const a = projectMeasure(start, width, height), b = projectMeasure(end, width, height);
+    if (!a.visible || !b.visible) { element.style.display = 'none'; return null; }
+    element.style.display = '';
+    element.setAttribute('x1', a.x.toFixed(1)); element.setAttribute('y1', a.y.toFixed(1));
+    element.setAttribute('x2', b.x.toFixed(1)); element.setAttribute('y2', b.y.toFixed(1));
+    return { a, b };
+  }
+  function screenNormal(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy) || 1;
+    return { x: -dy / length, y: dx / length, length };
+  }
+  function setMeasureTick(element, point, normal) {
+    if (!point.visible) { element.style.display = 'none'; return; }
+    element.style.display = '';
+    element.setAttribute('x1', (point.x - normal.x * 5).toFixed(1)); element.setAttribute('y1', (point.y - normal.y * 5).toFixed(1));
+    element.setAttribute('x2', (point.x + normal.x * 5).toFixed(1)); element.setAttribute('y2', (point.y + normal.y * 5).toFixed(1));
+  }
+  function labelIsSafe(x, y, width, height) {
+    if (x < 48 || x > width - 48 || y < 20 || y > height - 200) return false;
+    const hit = document.elementFromPoint(x, y);
+    return !hit || hit === canvas || hit === viewport;
+  }
+  function setMeasureLabel(element, a, b, width, height, center, preferUp = false) {
+    if (!a.visible || !b.visible) { element.style.display = 'none'; return; }
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length < 20) { element.style.display = 'none'; return; }
+    let nx = -(b.y - a.y) / length, ny = (b.x - a.x) / length;
+    if (preferUp) {
+      if (ny > 0) { nx = -nx; ny = -ny; }
+    } else {
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      if (nx * (mx - center.x) + ny * (my - center.y) < 0) { nx = -nx; ny = -ny; }
+    }
+    let chosen = null;
+    for (const stop of [.5, .3, .7, .15, .85, .05, .95]) {
+      const px = a.x + (b.x - a.x) * stop, py = a.y + (b.y - a.y) * stop;
+      for (const side of [1, -1]) {
+        const x = px + nx * side * 14, y = py + ny * side * 14;
+        if (!labelIsSafe(x, y, width, height)) continue;
+        chosen = { x, y }; break;
+      }
+      if (chosen) break;
+    }
+    if (!chosen) { element.style.display = 'none'; return; }
+    element.style.display = '';
+    element.setAttribute('x', chosen.x.toFixed(1)); element.setAttribute('y', chosen.y.toFixed(1));
+  }
+
+  function clearMeasure() {
+    const hadMeasure = !!measureItem || !measureOverlay.hasAttribute('hidden');
+    measureItem = null; measureState = null; tapStart = null;
+    removeMeasureNodes();
+    setMeasureOverlayVisible(false);
+    aimHint.hidden = true;
+    measureReadout.hidden = true;
+    crosshair.classList.remove('target');
+    measureCameraKnown = false;
+    aimCameraKnown = false;
+    if (hadMeasure) invalidate();
+  }
+  function pickFurniture(x, y) {
+    camera.updateMatrixWorld();
+    measureNdc.set(x, y);
+    measureRaycaster.setFromCamera(measureNdc, camera);
+    measureRaycaster.far = MEASURE_RANGE;
+    const hits = measureRaycaster.intersectObjects(measureTargets, false);
+    for (const hit of hits) return hit.object.userData.furnitureItem || null;
+    return null;
+  }
+  function setMeasure(item) {
+    measureItem = item;
+    buildMeasureState(item);
+    measureReadout.textContent = `${furnitureName(item.type)} · ${furnitureSizeText(item)} · 再点取消`;
+    setMeasureOverlayVisible(true);
+    aimHint.hidden = true;
+    measureReadout.hidden = false;
+    crosshair.classList.remove('target');
+    measureCameraKnown = false;
+    updateMeasure();
+    invalidate();
+  }
+  function toggleMeasure(x, y) {
+    const item = pickFurniture(x, y);
+    if (!item || item === measureItem) clearMeasure();
+    else setMeasure(item);
+  }
+  function measureAtEvent(event) {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    toggleMeasure(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+  }
+
+  function updateRoundMeasure(state, item, center, width, height) {
+    const radius = item.w / 2;
+    const candidates = [
+      [furnitureWorldPoint(item, -radius, 0), furnitureWorldPoint(item, radius, 0)],
+      [furnitureWorldPoint(item, 0, -radius), furnitureWorldPoint(item, 0, radius)],
+    ];
+    let chosen = null;
+    for (const [start, end] of candidates) {
+      const a = projectMeasure(start, width, height), b = projectMeasure(end, width, height);
+      if (!a.visible || !b.visible) continue;
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      if (!chosen || length > chosen.length) chosen = { a, b, length };
+    }
+    if (!chosen) {
+      state.lines[0].style.display = 'none';
+      state.ticks.forEach(tick => { tick.style.display = 'none'; });
+      state.labels[0].style.display = 'none';
+      return;
+    }
+    const line = state.lines[0];
+    line.style.display = '';
+    line.setAttribute('x1', chosen.a.x.toFixed(1)); line.setAttribute('y1', chosen.a.y.toFixed(1));
+    line.setAttribute('x2', chosen.b.x.toFixed(1)); line.setAttribute('y2', chosen.b.y.toFixed(1));
+    const normal = screenNormal(chosen.a, chosen.b);
+    setMeasureTick(state.ticks[0], chosen.a, normal);
+    setMeasureTick(state.ticks[1], chosen.b, normal);
+    setMeasureLabel(state.labels[0], chosen.a, chosen.b, width, height, center, true);
+  }
+
+  function updateRectMeasure(state, item, center, width, height) {
+    const halfW = item.w / 2, halfD = item.d / 2, gap = MEASURE_GAP;
+    const local = cameraLocalPosition(item, camera.position);
+    const sideX = local.x >= 0 ? 1 : -1, sideZ = local.z >= 0 ? 1 : -1;
+    const widthZ = sideZ * (halfD + gap), depthX = sideX * (halfW + gap);
+    const widthA = furnitureWorldPoint(item, -halfW, widthZ), widthB = furnitureWorldPoint(item, halfW, widthZ);
+    const depthA = furnitureWorldPoint(item, depthX, -halfD), depthB = furnitureWorldPoint(item, depthX, halfD);
+    const widthScreen = setProjectedLine(state.lines[0], widthA, widthB, width, height);
+    const depthScreen = setProjectedLine(state.lines[1], depthA, depthB, width, height);
+    const extensions = [
+      [furnitureWorldPoint(item, -halfW, sideZ * halfD), furnitureWorldPoint(item, -halfW, widthZ + sideZ * .04)],
+      [furnitureWorldPoint(item, halfW, sideZ * halfD), furnitureWorldPoint(item, halfW, widthZ + sideZ * .04)],
+      [furnitureWorldPoint(item, sideX * halfW, -halfD), furnitureWorldPoint(item, depthX + sideX * .04, -halfD)],
+      [furnitureWorldPoint(item, sideX * halfW, halfD), furnitureWorldPoint(item, depthX + sideX * .04, halfD)],
+    ];
+    extensions.forEach(([start, end], index) => setProjectedLine(state.extensions[index], start, end, width, height));
+    for (const [screen, tickIndex] of [[widthScreen, 0], [depthScreen, 2]]) {
+      if (!screen) { state.ticks[tickIndex].style.display = 'none'; state.ticks[tickIndex + 1].style.display = 'none'; continue; }
+      const normal = screenNormal(screen.a, screen.b);
+      setMeasureTick(state.ticks[tickIndex], screen.a, normal);
+      setMeasureTick(state.ticks[tickIndex + 1], screen.b, normal);
+    }
+    if (widthScreen) setMeasureLabel(state.labels[0], widthScreen.a, widthScreen.b, width, height, center);
+    else state.labels[0].style.display = 'none';
+    if (depthScreen) setMeasureLabel(state.labels[1], depthScreen.a, depthScreen.b, width, height, center);
+    else state.labels[1].style.display = 'none';
+  }
+
+  function updateMeasure() {
+    if (!measureItem || !measureState || (movement && movement.overview)) {
+      if (!measureOverlay.hasAttribute('hidden')) setMeasureOverlayVisible(false);
+      measureReadout.hidden = true;
+      return;
+    }
+    const width = viewport.clientWidth, height = viewport.clientHeight;
+    if (!width || !height) { setMeasureOverlayVisible(false); measureReadout.hidden = true; return; }
+    camera.updateMatrixWorld();
+    const sizeChanged = measureViewWidth !== width || measureViewHeight !== height;
+    if (measureCameraKnown && !sizeChanged && measureCameraMatrix.equals(camera.matrixWorld)) return;
+    measureCameraKnown = true;
+    measureCameraMatrix.copy(camera.matrixWorld);
+    if (sizeChanged) {
+      measureViewWidth = width; measureViewHeight = height;
+      measureOverlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    }
+    measureCenter.copy(furnitureWorldPoint(measureItem, 0, 0, .5));
+    measureDirection.copy(measureCenter).sub(camera.position);
+    const distance = measureDirection.length();
+    camera.getWorldDirection(measureForward);
+    if (distance > MEASURE_RANGE || measureDirection.dot(measureForward) <= .01) {
+      setMeasureOverlayVisible(false);
+      measureReadout.hidden = true;
+      return;
+    }
+    setMeasureOverlayVisible(true);
+    measureReadout.hidden = false;
+    const state = measureState;
+    let points = '';
+    for (const [localX, localZ] of footprintLocalPoints(measureItem)) {
+      const projected = projectMeasure(furnitureWorldPoint(measureItem, localX, localZ), width, height);
+      if (!projected.visible) { points = ''; break; }
+      points += `${projected.x.toFixed(1)},${projected.y.toFixed(1)} `;
+    }
+    if (points) { state.footprint.style.display = ''; state.footprint.setAttribute('points', points.trim()); }
+    else state.footprint.style.display = 'none';
+    const center = projectMeasure(furnitureWorldPoint(measureItem, 0, 0), width, height);
+    if (state.round) updateRoundMeasure(state, measureItem, center, width, height);
+    else updateRectMeasure(state, measureItem, center, width, height);
+  }
+
+  function updateAim() {
+    if (mobile || !movement?.active || movement.overview || measureItem) {
+      aimHint.hidden = true;
+      crosshair.classList.remove('target');
+      return;
+    }
+    const item = pickFurniture(0, 0);
+    if (item) {
+      aimHint.textContent = `点击标注 · ${furnitureName(item.type)}`;
+      aimHint.hidden = false;
+      crosshair.classList.add('target');
+    } else {
+      aimHint.hidden = true;
+      crosshair.classList.remove('target');
+    }
+  }
 
   function message(text) {
     clearTimeout(toastTimer); get('toast').textContent = text; get('toast').hidden = false;
@@ -382,7 +696,29 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     });
     layerFurniture.addEventListener('click', () => { setDimensionLayer('furniture'); layerFurniture.blur(); });
     layerRooms.addEventListener('click', () => { setDimensionLayer('room'); layerRooms.blur(); });
-    roomSelect.addEventListener('change', () => { if (roomSelect.value) { movement.teleport(roomSelect.value); roomSelect.value = ''; roomSelect.blur(); } });
+    canvas.addEventListener('click', () => {
+      if (mobile || !movement.active || movement.overview) return;
+      toggleMeasure(0, 0);
+    });
+    canvas.addEventListener('pointerdown', event => {
+      if (!mobile || event.pointerType === 'mouse' || movement.overview) return;
+      tapStart = { id: event.pointerId, x: event.clientX, y: event.clientY, time: performance.now() };
+    });
+    canvas.addEventListener('pointermove', event => {
+      if (!tapStart || tapStart.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y) > 10) tapStart = null;
+    });
+    canvas.addEventListener('pointerup', event => {
+      if (!tapStart || tapStart.id !== event.pointerId) return;
+      const tap = tapStart; tapStart = null;
+      if (performance.now() - tap.time > 450) return;
+      if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 10) return;
+      if (!movement.active || movement.overview) return;
+      measureAtEvent(event);
+    });
+    canvas.addEventListener('pointercancel', () => { tapStart = null; });
+    canvas.addEventListener('lostpointercapture', () => { tapStart = null; });
+    roomSelect.addEventListener('change', () => { if (roomSelect.value) { clearMeasure(); movement.teleport(roomSelect.value); roomSelect.value = ''; roomSelect.blur(); } });
     const settingsPanel = get('settings-panel');
     get('settings-button').addEventListener('click', () => { movement.pause(); settingsPanel.hidden = !settingsPanel.hidden; get('settings-button').setAttribute('aria-expanded', String(!settingsPanel.hidden)); });
     get('settings-close').addEventListener('click', () => { settingsPanel.hidden = true; get('settings-button').setAttribute('aria-expanded', 'false'); });
@@ -410,11 +746,14 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     map.addEventListener('click', event => {
       const room = mapRoomAt(event);
       if (!room) return;
+      clearMeasure();
       movement.teleport(room.id);
       setMapExpanded(false);
     });
     window.addEventListener('keydown', event => {
       if (event.key === 'Escape' && mapPanel.classList.contains('expanded')) setMapExpanded(false);
+      if (event.target.closest('input,select,textarea,button')) return;
+      if (/^Digit[1-9]$/.test(event.code) && !event.repeat) clearMeasure();
     });
     get('sun-toggle').addEventListener('click', () => {
       const collapsed = get('sun-panel').classList.toggle('collapsed');
@@ -436,8 +775,10 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     const walking = active && !movement?.overview;
     get('app').classList.toggle('walking', walking && !mobile);
     get('entry-prompt').hidden = active || !!movement?.overview; get('crosshair').hidden = !walking;
+    if (!active) clearMeasure();
   }
   function onMode(overview, planMode = false) {
+    clearMeasure();
     if (!overview && dimensionsVisible) setDimensionsVisible(false);
     get('app').classList.toggle('walking', !mobile && !overview && movement.active);
     get('mode-text').textContent = overview ? '回到房间' : '鸟瞰全屋';
@@ -522,6 +863,18 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
       const position = movement.playerPosition; const room = currentRoom(plan, position.x, -position.z);
       if (room?.id !== lastRoomId) { get('room-name').textContent = room?.name || '过道'; lastRoomId = room?.id; }
     }
+    if (!mobile) {
+      aimElapsed += delta;
+      if (aimElapsed >= .12) {
+        aimElapsed = 0;
+        if (!aimCameraKnown || !aimCameraMatrix.equals(camera.matrixWorld)) {
+          aimCameraMatrix.copy(camera.matrixWorld);
+          aimCameraKnown = true;
+          updateAim();
+        }
+      }
+    }
+    updateMeasure();
     updateDimensions();
     mapElapsed += delta;
     if (mapElapsed >= .08) { updateMap(); mapElapsed = 0; }

@@ -36,3 +36,13 @@
 .furniture-table tbody td:first-child{color:#7d8575;white-space:nowrap}
 @media(min-width:380px) and (max-width:700px){.map-panel.collapsed{top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:min(150px,calc(100vw - 262px))}.map-panel.collapsed .map-header{padding:3px 4px 3px 9px;font-size:9px;letter-spacing:0;gap:2px}.map-panel.collapsed .map-header button{width:28px;height:28px;font-size:16px}}
 .dimension-layers{position:absolute;top:154px;left:12px;z-index:4;display:flex;gap:2px;padding:3px;border-radius:3px}.dimension-layers button{padding:5px 9px;font-size:11px;letter-spacing:.5px;color:#707a69;border-radius:2px}.dimension-layers button[aria-pressed=true]{background:rgba(82,107,80,.13);color:#3f503b}
+.measure-overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:hidden}
+.measure-overlay .measure-footprint{fill:none;stroke:rgba(82,107,80,.4);stroke-width:1.2;stroke-dasharray:5 5;stroke-linecap:round}
+.measure-overlay .measure-ext{stroke:rgba(82,107,80,.45);stroke-width:1;stroke-dasharray:3 3}
+.measure-overlay .measure-line,.measure-overlay .measure-tick{stroke:#4c6446;stroke-width:1.5;stroke-linecap:round}
+.measure-overlay .measure-label{font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:12px;font-weight:500;fill:#3f503b;letter-spacing:.2px;text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:rgba(249,248,242,.96);stroke-width:4px;stroke-linejoin:round}
+.crosshair.target{border-color:#f7f7ec;background:#7b956f;box-shadow:0 0 0 4px rgba(249,248,242,.35)}
+.aim-hint{position:absolute;left:50%;top:calc(50% + 16px);transform:translateX(-50%);padding:4px 9px;border-radius:2px;background:rgba(249,248,242,.92);border:1px solid rgba(255,255,255,.7);box-shadow:0 3px 14px rgba(41,47,30,.1);font-size:10px;letter-spacing:.5px;color:#5d6e50;white-space:nowrap;pointer-events:none}
+.measure-readout{position:absolute;left:50%;top:calc(50% + 16px);transform:translateX(-50%);padding:5px 10px;border-radius:2px;background:rgba(249,248,242,.95);border:1px solid rgba(82,107,80,.18);box-shadow:0 3px 14px rgba(41,47,30,.12);font-size:11px;letter-spacing:.4px;color:#3f503b;white-space:nowrap;pointer-events:none}
+.touch-look-note{text-align:right;line-height:1.6}
+@media(max-width:700px){.measure-overlay .measure-label{font-size:11px;stroke-width:3.5px}.aim-hint{font-size:9px;top:calc(50% + 14px)}.measure-readout{font-size:10px;top:calc(50% + 14px)}}

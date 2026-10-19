@@ -1,4 +1,4 @@
-const CACHE = 'virtual-home-v3';
+const CACHE = 'virtual-home-v4';
 const ROOT = new URL('./', self.registration.scope).href;
 
 self.addEventListener('install', event => {
