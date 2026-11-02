@@ -12,11 +12,11 @@
     // 不用 SPA 回退：缺失的资源应返回 404，避免 Service Worker 把 index.html 缓存成 JS/CSS
     "not_found_handling": "none"
   },
-  "routes": [
-    { "pattern": "house.yueming.uk", "custom_domain": true }
-  ],
-  // 保留 *.workers.dev 地址，便于排查
+  // 自定义域名 house.yueming.uk 在控制台绑定，不写 routes：部署时不改 DNS，
+  // 也就不依赖 DNS 编辑权限（Workers Builds 自动创建的令牌没有）。
+  // 保留 *.workers.dev 地址与预览链接，便于排查
   "workers_dev": true,
+  "preview_urls": true,
   // Workers Builds 对非生产分支运行 `wrangler preview`，必须有此块（可为空），否则构建会失败；预览不影响线上
   "previews": {}
 }
