@@ -96,15 +96,14 @@
       </section>
 
       <div class="entry-prompt" id="entry-prompt">
-        <span class="prompt-line"></span><div><span class="eyebrow">TAKE A WALK</span><button id="enter-button" type="button">走进我们的家 <span>↗</span></button><p id="entry-instruction">点击锁定鼠标 · WASD 行走 · Esc 退出</p></div>
+        <span class="prompt-line"></span><div><span class="eyebrow">TAKE A WALK</span><button id="enter-button" type="button">走进我们的家 <span>↗</span></button><p id="entry-instruction">拖动看四周 · 点地面走过去 · WASD / 方向键移动</p></div>
       </div>
-      <div class="crosshair" id="crosshair" hidden></div>
       <div class="aim-hint" id="aim-hint" hidden>点击量尺寸</div>
       <div class="measure-readout" id="measure-readout" hidden></div>
-      <div class="desktop-help" id="desktop-help"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 行走</span><span><kbd>Shift</kbd> 加速</span><span><kbd>点击</kbd> 量家具</span><span><kbd>空格</kbd> 日照延时</span></div>
+      <div class="desktop-help" id="desktop-help"><span><kbd>拖动</kbd> 看四周</span><span><kbd>点地面</kbd> 走过去</span><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>方向键</kbd> 移动</span><span><kbd>Shift</kbd> 加速</span><span><kbd>点家具</kbd> 量尺寸</span><span><kbd>空格</kbd> 日照延时</span></div>
       <div class="touch-controls" id="touch-controls" hidden>
         <div class="joystick" id="joystick" aria-label="行走摇杆"><div class="joystick-ring"></div><div class="joystick-knob" id="joystick-knob"></div><span>行走</span></div>
-        <div class="touch-look-note">右侧拖动看四周<br />轻点家具量尺寸</div>
+        <div class="touch-look-note">轻点地面走过去<br />拖动看四周 · 点家具量尺寸</div>
         <button id="sprint-button" type="button" aria-label="按住加速">加速 <span>↑↑</span></button>
       </div>
 
@@ -121,8 +120,6 @@
     </main>
     <script>
       function showHouseError(message) {
-        if (document.pointerLockElement) document.exitPointerLock();
-        document.getElementById('app').classList.remove('walking');
         document.getElementById('loading').hidden = true;
         document.getElementById('error-screen').hidden = false;
         document.getElementById('error-message').textContent = message;

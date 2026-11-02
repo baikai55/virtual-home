@@ -12,9 +12,13 @@ try {
   const mobile = window.matchMedia('(pointer: coarse)').matches;
   const canvas = document.createElement('canvas');
   const viewport = document.getElementById('viewport');
-  if (!canvas.getContext('webgl2')) throw new Error('当前浏览器或设备未提供 WebGL2，请使用支持 WebGL2 的现代 Chrome 或 Safari。');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.35 : 1.75));
+  // 用独立画布探测：若在渲染画布上先 getContext，three 的 antialias、powerPreference 参数会被忽略。
+  const probe = document.createElement('canvas').getContext('webgl2');
+  if (!probe) throw new Error('当前浏览器或设备未提供 WebGL2，请使用支持 WebGL2 的现代 Chrome 或 Safari。');
+  probe.getExtension('WEBGL_lose_context')?.loseContext();
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  const pixelRatio = () => Math.min(window.devicePixelRatio, mobile ? 1.35 : 1.75);
+  renderer.setPixelRatio(pixelRatio());
   renderer.setSize(viewport.clientWidth, viewport.clientHeight, false);
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
@@ -30,11 +34,12 @@ try {
   const invalidate = () => { needsRender = true; };
   const sun = createSunSystem(scene, renderer, house, plan.settings, mobile);
   const ui = createInterface(plan, camera, mobile, scene, invalidate);
-  const movement = createMovement(camera, renderer, plan, house, mobile, { onActive: ui.onActive, onMode: ui.onMode, onMessage: ui.message, onPlayback: ui.togglePlayback });
+  const movement = createMovement(camera, renderer, plan, house, mobile, { onActive: ui.onActive, onMode: ui.onMode, onMessage: ui.message, onPlayback: ui.togglePlayback, onWalk: ui.onWalk });
   ui.bind(movement, sun);
   renderer.domElement.addEventListener('webglcontextlost', event => { event.preventDefault(); window.showHouseError('图形上下文已丢失，请重新加载页面。'); });
   window.addEventListener('resize', () => {
-    camera.aspect = viewport.clientWidth / viewport.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(viewport.clientWidth, viewport.clientHeight, false);
+    camera.aspect = viewport.clientWidth / viewport.clientHeight; camera.updateProjectionMatrix();
+    renderer.setPixelRatio(pixelRatio()); renderer.setSize(viewport.clientWidth, viewport.clientHeight, false);
     movement.resize(); invalidate();
   });
   const renderedMatrix = new THREE.Matrix4();
