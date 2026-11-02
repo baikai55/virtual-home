@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // 必须与 Cloudflare 控制台中的 Worker 名称一致，否则 Workers Builds 会构建失败
+  "name": "virtual-home",
+  "compatibility_date": "2026-11-01",
+  // wrangler deploy / versions upload / dev 前先构建，控制台无需另配构建命令
+  "build": {
+    "command": "npm run build"
+  },
+  "assets": {
+    "directory": "./dist",
+    // 不用 SPA 回退：缺失的资源应返回 404，避免 Service Worker 把 index.html 缓存成 JS/CSS
+    "not_found_handling": "none"
+  },
+  "routes": [
+    { "pattern": "house.yueming.uk", "custom_domain": true }
+  ],
+  // 保留 *.workers.dev 地址，便于排查和非生产分支的预览链接
+  "workers_dev": true
+}

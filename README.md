@@ -37,9 +37,13 @@ npm run preview
 
 构建生成 `dist/`，预览默认 `http://localhost:4173/`。所有运行依赖已打包到静态文件中，网站访问时无需第三方 CDN。`dist/` 还包含 `manifest.webmanifest`、`sw.js`、`_headers`、PWA 图标和分享预览图。
 
-现有服务器：把 `dist/` **里面的所有文件**上传到网站根目录。`_headers` 用于给带哈希的 `assets/` 设置一年 immutable 缓存；服务器不支持该文件时不影响页面，只是少一层浏览器缓存优化。
+线上部署：Cloudflare Workers 静态资源，配置在 `wrangler.jsonc`（Worker 名 `virtual-home`、资源目录 `dist`、自定义域名 `house.yueming.uk`）。`wrangler deploy` 会先执行 `npm run build` 再上传；`_headers` 由 Workers 自动应用（带哈希的 `assets/` 一年 immutable 缓存，HTML 和 `sw.js` 每次重新验证）。不存在的路径直接返回 404，不回退到首页。
 
-Cloudflare Pages：直接上传解压后的部署包内容；或使用源码构建，项目根目录设置为 `virtual-home`（如果仓库根目录就是本项目则留空），构建命令 `npm run build`，输出目录 `dist`，Node 版本设置为 22。Cloudflare Pages 会自动应用 `_headers`；部署到 HTTPS 网址后，电脑和手机访问同一网址，首次访问后由 Service Worker 提供离线缓存。
+自动部署：仓库通过 Cloudflare Workers Builds 连接 GitHub，推送到 `main` 后自动构建并发布到线上；推送其他分支会生成预览版本，不影响线上。重新接入时：Cloudflare 控制台 → Workers & Pages → 创建应用 → 选择 GitHub 仓库；Worker 名称必须与 `wrangler.jsonc` 的 `name` 一致，构建命令留空，部署命令保持默认 `npx wrangler deploy`，生产分支 `main`。
+
+手动部署（可选）：`npx wrangler login` 登录后执行 `npm run deploy`。用 Workers 运行时在本地预览（含 `_headers` 和 404 行为）：`npx wrangler dev`。
+
+也可把 `dist/` **里面的所有文件**上传到任意静态服务器根目录；服务器不支持 `_headers` 时不影响页面，只是少一层浏览器缓存优化。部署到 HTTPS 网址后，首次访问后由 Service Worker 提供离线缓存。
 
 根目录 `vite.config.js` 设置资源基路径及本地端口，当前 `base: './'` 可用于静态子目录。房屋和日照参数集中在 `floor-plan.json`；修改后重新构建。分享预览图 `og-image.jpg` 及 `index.html` 中的 `og:url`/`og:image` 按 `https://house.yueming.uk/` 配置，换域名时需要同步修改。
 
@@ -71,4 +75,6 @@ Cloudflare Pages：直接上传解压后的部署包内容；或使用源码构�
 
 性能优化：太阳阴影在时间或相关显示状态变化时更新；白天强度为零的室内灯不参与着色，夜间重新开启。Intel HD Graphics 630、Edge、1440×900 的日间场景对比测量中，静止画面绘制次数从每帧 661 次降到 179 次；移除零强度室内灯后 GPU 平均耗时从约 17.6ms 降到 7.1ms，最后一轮约 60fps。2026-10-19 起静止画面不再逐帧重绘，进一步降低空闲功耗。这是本机测试结果，实际帧率随设备和视角变化。
 
-未验证真实手机和 iPhone Safari，也未测量这些设备的帧率；需要支持 WebGL2 的现代浏览器。未验证实际服务器或 Cloudflare 部署以及线上 `_headers` 生效情况，交付为可部署静态产物。
+2026-11-02 部署改为 Cloudflare Workers：新增 `wrangler.jsonc`（wrangler 4.156.1），删除手动上传用的 zip 包。本机从干净依赖执行 `npm ci` 和 `npx wrangler deploy --dry-run`，确认会先构建再读取 `dist/`；`npx wrangler dev` 确认 `_headers` 的 9 条规则生效、`_headers` 文件本身不对外提供、不存在的路径返回 404（与原 Pages 线上行为一致）。构建产物引用的资源哈希与原线上页面相同。
+
+未验证真实手机和 iPhone Safari，也未测量这些设备的帧率；需要支持 WebGL2 的现代浏览器。线上 Workers 部署与域名切换未在本机验证，需在 Cloudflare 接入 Workers Builds 后确认。
