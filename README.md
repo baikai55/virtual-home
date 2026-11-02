@@ -39,9 +39,9 @@ npm run preview
 
 构建生成 `dist/`，预览默认 `http://localhost:4173/`。所有运行依赖已打包到静态文件中，网站访问时无需第三方 CDN。`dist/` 还包含 `manifest.webmanifest`、`sw.js`、`_headers`、PWA 图标和分享预览图。构建时会把产物内容哈希写进 `sw.js` 的缓存名，内容有变化的部署上线后，浏览器会自动更新离线缓存并删除旧版本。
 
-线上部署：Cloudflare Workers 静态资源，配置在 `wrangler.jsonc`（Worker 名 `virtual-home`、资源目录 `dist`、自定义域名 `house.yueming.uk`）。`wrangler deploy` 会先执行 `npm run build` 再上传；`_headers` 由 Workers 自动应用（带哈希的 `assets/` 一年 immutable 缓存，HTML 和 `sw.js` 每次重新验证）。不存在的路径直接返回 404，不回退到首页。
+线上部署：Cloudflare Workers 静态资源，配置在 `wrangler.jsonc`（Worker 名 `virtual-home`、资源目录 `dist`）。`wrangler deploy` 会先执行 `npm run build` 再上传；`_headers` 由 Workers 自动应用（带哈希的 `assets/` 一年 immutable 缓存，HTML 和 `sw.js` 每次重新验证）。不存在的路径直接返回 404，不回退到首页。自定义域名 `house.yueming.uk` 在 Cloudflare 控制台绑定到这个 Worker（Worker → Settings → Domains & Routes → Custom Domain），不写进配置，所以部署不会改动 DNS。
 
-自动部署：仓库通过 Cloudflare Workers Builds 连接 GitHub，推送到 `main` 后自动构建并发布到线上；推送其他分支会用 `wrangler preview` 生成独立的预览链接（`wrangler.jsonc` 中的 `previews` 块为此必需），不影响线上。重新接入时：Cloudflare 控制台 → Workers & Pages → 创建应用 → 选择 GitHub 仓库；Worker 名称必须与 `wrangler.jsonc` 的 `name` 一致，构建命令留空，部署命令保持默认 `npx wrangler deploy`，生产分支 `main`。
+自动部署：仓库通过 Cloudflare Workers Builds 连接 GitHub，推送到 `main` 后自动构建并发布到线上；推送其他分支会用 `wrangler preview` 生成预览部署（`wrangler.jsonc` 中的 `previews` 块为此必需），不影响线上，结果见 PR 下 Cloudflare 机器人的评论。重新接入时：Cloudflare 控制台 → Workers & Pages → 创建应用 → 选择 GitHub 仓库；Worker 名称必须与 `wrangler.jsonc` 的 `name` 一致，构建命令可留空（填 `npm run build` 也行，只是多构建一次），部署命令保持默认 `npx wrangler deploy`，生产分支 `main`；首次部署成功后再绑定自定义域名（该主机名已有 CNAME 记录时需先删除）。
 
 手动部署（可选）：`npx wrangler login` 登录后执行 `npm run deploy`。用 Workers 运行时在本地预览（含 `_headers` 和 404 行为）：`npx wrangler dev`。
 
