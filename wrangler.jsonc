@@ -3,7 +3,7 @@
   // 必须与 Cloudflare 控制台中的 Worker 名称一致，否则 Workers Builds 会构建失败
   "name": "virtual-home",
   "compatibility_date": "2026-11-01",
-  // wrangler deploy / versions upload / dev 前先构建，控制台无需另配构建命令
+  // wrangler deploy、preview、dev 前都会先执行构建，控制台无需另配构建命令
   "build": {
     "command": "npm run build"
   },
@@ -15,6 +15,8 @@
   "routes": [
     { "pattern": "house.yueming.uk", "custom_domain": true }
   ],
-  // 保留 *.workers.dev 地址，便于排查和非生产分支的预览链接
-  "workers_dev": true
+  // 保留 *.workers.dev 地址，便于排查
+  "workers_dev": true,
+  // Workers Builds 对非生产分支运行 `wrangler preview`，必须有此块（可为空），否则构建会失败；预览不影响线上
+  "previews": {}
 }

@@ -41,7 +41,7 @@ npm run preview
 
 线上部署：Cloudflare Workers 静态资源，配置在 `wrangler.jsonc`（Worker 名 `virtual-home`、资源目录 `dist`、自定义域名 `house.yueming.uk`）。`wrangler deploy` 会先执行 `npm run build` 再上传；`_headers` 由 Workers 自动应用（带哈希的 `assets/` 一年 immutable 缓存，HTML 和 `sw.js` 每次重新验证）。不存在的路径直接返回 404，不回退到首页。
 
-自动部署：仓库通过 Cloudflare Workers Builds 连接 GitHub，推送到 `main` 后自动构建并发布到线上；推送其他分支会生成预览版本，不影响线上。重新接入时：Cloudflare 控制台 → Workers & Pages → 创建应用 → 选择 GitHub 仓库；Worker 名称必须与 `wrangler.jsonc` 的 `name` 一致，构建命令留空，部署命令保持默认 `npx wrangler deploy`，生产分支 `main`。
+自动部署：仓库通过 Cloudflare Workers Builds 连接 GitHub，推送到 `main` 后自动构建并发布到线上；推送其他分支会用 `wrangler preview` 生成独立的预览链接（`wrangler.jsonc` 中的 `previews` 块为此必需），不影响线上。重新接入时：Cloudflare 控制台 → Workers & Pages → 创建应用 → 选择 GitHub 仓库；Worker 名称必须与 `wrangler.jsonc` 的 `name` 一致，构建命令留空，部署命令保持默认 `npx wrangler deploy`，生产分支 `main`。
 
 手动部署（可选）：`npx wrangler login` 登录后执行 `npm run deploy`。用 Workers 运行时在本地预览（含 `_headers` 和 404 行为）：`npx wrangler dev`。
 
