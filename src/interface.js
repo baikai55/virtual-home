@@ -10,6 +10,9 @@ const FURNITURE_LABEL_SIZE = .036;
 const FURNITURE_LABEL_HEIGHT = 1.32;
 const MEASURE_RANGE = 4;
 const MEASURE_GAP = .16;
+// 与 building.js 的剖切高度一致：裁剪不影响射线，鸟瞰时要忽略被剖掉的部分。
+const CUTAWAY_HEIGHT = .95;
+const UI_PREFS_KEY = 'virtual-home-ui';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const floorColors = { wood: '#e1d9c6', kitchen: '#d6d9cd', stone: '#cad4ce', balcony: '#d8ddce' };
 const furnitureNames = {
@@ -137,13 +140,33 @@ function createFurnitureLabel(scene, item) {
   scene.add(sprite); return sprite;
 }
 
+function createFloorRing(scene, color, opacity) {
+  const group = new THREE.Group();
+  const options = { color, transparent: true, depthWrite: false, toneMapped: false, fog: false };
+  const ring = new THREE.Mesh(new THREE.RingGeometry(.17, .23, 48), new THREE.MeshBasicMaterial({ ...options, opacity }));
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(.17, 48), new THREE.MeshBasicMaterial({ ...options, opacity: opacity * .3 }));
+  for (const mesh of [ring, disc]) {
+    mesh.rotation.x = -Math.PI / 2; mesh.renderOrder = 2;
+    mesh.raycast = () => {};
+    group.add(mesh);
+  }
+  group.position.y = .035; group.visible = false;
+  scene.add(group); return group;
+}
+
+function readUiPrefs() {
+  try { return JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}') || {}; } catch { return {}; }
+}
+function saveUiPref(key, value) {
+  try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify({ ...readUiPrefs(), [key]: value })); } catch {}
+}
+
 export function createInterface(plan, camera, mobile, scene, invalidate = () => {}) {
   const get = id => document.getElementById(id);
   const viewport = get('viewport');
   const measureOverlay = get('measure-overlay');
   const aimHint = get('aim-hint');
   const measureReadout = get('measure-readout');
-  const crosshair = get('crosshair');
   const canvas = viewport.querySelector('canvas');
   const mapPanel = get('map-panel');
   const mapBackdrop = get('map-backdrop');
@@ -182,6 +205,8 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   });
   const measureRaycaster = new THREE.Raycaster();
   const measureTargets = pickables.concat(occluders);
+  const hoverRing = createFloorRing(scene, '#fbfaf3', .92);
+  const destinationRing = createFloorRing(scene, '#54714b', .9);
   const settings = plan.settings;
   const defaultSettings = { ...settings };
   const settingsKey = 'virtual-home-sun-settings';
@@ -199,11 +224,12 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   let movement, sunSystem, playing = false, dimensionsVisible = false, minutes = settings.initialTimeMinutes;
   let mapElapsed = 0, solarElapsed = 0, toastTimer, lastRoomId, hoverRoomId = null;
   let dimensionLayer = mobile ? 'furniture' : 'all';
-  let measureItem = null, measureState = null, aimElapsed = 0, tapStart = null;
+  let measureItem = null, measureState = null, tapStart = null, multiTouch = false;
   let measureViewWidth = 0, measureViewHeight = 0, measureCameraKnown = false;
-  let aimCameraKnown = false;
+  let hoverPoint = null, hoverDirty = false, hoverElapsed = 0, hoverCameraKnown = false, lastMapSignature = '';
+  const touchPointers = new Set();
   const measureCameraMatrix = new THREE.Matrix4();
-  const aimCameraMatrix = new THREE.Matrix4();
+  const hoverCameraMatrix = new THREE.Matrix4();
   date.value = localDateString(settings.utcOffsetHours); slider.value = minutes;
   get('latitude').value = settings.latitude; get('longitude').value = settings.longitude;
   get('utc-offset').value = settings.utcOffsetHours; get('orientation').value = settings.planUpAzimuthDeg;
@@ -211,7 +237,7 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   get('interior-area').textContent = `套内 ${plan.metadata.interiorBuildingArea.toFixed(2)}㎡`;
   if (mobile) {
     get('touch-controls').hidden = false; get('desktop-help').hidden = true;
-    get('entry-instruction').textContent = '左侧摇杆行走 · 右侧拖动看四周';
+    get('entry-instruction').textContent = '轻点地面走过去 · 拖动看四周 · 摇杆行走';
     dimensionsToggle.setAttribute('aria-label', '打开尺寸标注平面');
     get('dimensions-text').textContent = '标注';
   }
@@ -347,18 +373,29 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     setMeasureOverlayVisible(false);
     aimHint.hidden = true;
     measureReadout.hidden = true;
-    crosshair.classList.remove('target');
     measureCameraKnown = false;
-    aimCameraKnown = false;
+    hoverDirty = true;
     if (hadMeasure) invalidate();
   }
-  function pickFurniture(x, y) {
+  // 取第一个可见命中：4 米内的家具可量尺寸；地面、地毯和远处家具都算“走到这里”。
+  function classifyPointer(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
     camera.updateMatrixWorld();
-    measureNdc.set(x, y);
+    measureNdc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     measureRaycaster.setFromCamera(measureNdc, camera);
-    measureRaycaster.far = MEASURE_RANGE;
+    measureRaycaster.far = 80;
     const hits = measureRaycaster.intersectObjects(measureTargets, false);
-    for (const hit of hits) return hit.object.userData.furnitureItem || null;
+    const overview = !!movement?.overview;
+    // 透过玻璃门窗也能点到后面的地面；鸟瞰时忽略已被剖掉的上半部分。
+    const hit = hits.find(item => !(item.object.material.transparent && item.object.material.opacity < .5) && (!overview || item.point.y <= CUTAWAY_HEIGHT));
+    if (!hit) return null;
+    const item = hit.object.userData.furnitureItem;
+    const x = hit.point.x, y = -hit.point.z;
+    // 鸟瞰时点到哪里（含被剖开的墙）都按“进到这附近”处理。
+    if (overview) return { kind: 'walk', x, y, snap: item && item.type !== 'rug' ? 1.5 : 1 };
+    if (item && item.type !== 'rug') return hit.distance <= MEASURE_RANGE ? { kind: 'furniture', item } : { kind: 'walk', x, y, snap: 1.5 };
+    if (item || hit.point.y < .08) return { kind: 'walk', x, y, snap: .6 };
     return null;
   }
   function setMeasure(item) {
@@ -368,23 +405,24 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     setMeasureOverlayVisible(true);
     aimHint.hidden = true;
     measureReadout.hidden = false;
-    crosshair.classList.remove('target');
     measureCameraKnown = false;
+    hoverDirty = true;
     updateMeasure();
     invalidate();
   }
-  function toggleMeasure(x, y) {
-    const item = pickFurniture(x, y);
-    if (!item || item === measureItem) clearMeasure();
-    else setMeasure(item);
-  }
-  function measureAtEvent(event) {
-    const rect = canvas.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    toggleMeasure(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
+  function handleTap(clientX, clientY) {
+    if (!movement || movement.busy || (movement.overview && movement.plan)) return;
+    const target = classifyPointer(clientX, clientY);
+    if (movement.overview) {
+      if (target?.kind === 'walk') movement.enterAt(target.x, target.y, target.snap);
+      return;
+    }
+    if (target?.kind === 'furniture') {
+      if (target.item === measureItem) clearMeasure(); else setMeasure(target.item);
+      return;
+    }
+    if (target?.kind !== 'walk') { clearMeasure(); return; }
+    if (!movement.walkTo(target.x, target.y, target.snap)) message('这里走不过去，换个位置试试');
   }
 
   function updateRoundMeasure(state, item, center, width, height) {
@@ -486,21 +524,30 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     else updateRectMeasure(state, measureItem, center, width, height);
   }
 
-  function updateAim() {
-    if (mobile || !movement?.active || movement.overview || measureItem) {
-      aimHint.hidden = true;
-      crosshair.classList.remove('target');
-      return;
+  function setRing(ring, point) {
+    if (!point && !ring.visible) return;
+    if (point && ring.visible && Math.abs(ring.position.x - point.x) < 1e-3 && Math.abs(ring.position.z + point.y) < 1e-3) return;
+    ring.visible = !!point;
+    if (point) ring.position.set(point.x, .035, -point.y);
+    invalidate();
+  }
+  // 鼠标悬停：地面显示落脚光圈，近处家具提示可量尺寸。
+  function updateHover() {
+    hoverDirty = false; hoverElapsed = 0;
+    hoverCameraMatrix.copy(camera.matrixWorld); hoverCameraKnown = true;
+    let item = null, target = null;
+    if (hoverPoint && movement && !movement.busy && !(movement.overview && movement.plan)) {
+      const result = classifyPointer(hoverPoint.x, hoverPoint.y);
+      if (result?.kind === 'furniture') item = result.item;
+      else if (result?.kind === 'walk') target = movement.resolveTarget(result.x, result.y, result.snap);
     }
-    const item = pickFurniture(0, 0);
+    setRing(hoverRing, target);
+    canvas.classList.toggle('can-measure', !!item);
     if (item) {
-      aimHint.textContent = `点击标注 · ${furnitureName(item.type)}`;
-      aimHint.hidden = false;
-      crosshair.classList.add('target');
-    } else {
-      aimHint.hidden = true;
-      crosshair.classList.remove('target');
+      aimHint.textContent = `${item === measureItem ? '点击取消标注' : '点击量尺寸'} · ${furnitureName(item.type)}`;
+      aimHint.style.left = `${hoverPoint.x}px`; aimHint.style.top = `${hoverPoint.y + 22}px`;
     }
+    aimHint.hidden = !item;
   }
 
   function message(text) {
@@ -532,10 +579,16 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
   }
 
   function updateMap() {
-    if (mapPanel.classList.contains('collapsed')) return;
-    ctx.clearRect(0, 0, map.width, map.height);
+    if (mapPanel.classList.contains('collapsed')) { lastMapSignature = ''; return; }
     const expanded = mapPanel.classList.contains('expanded');
     const mapCssWidth = map.getBoundingClientRect().width || map.width;
+    const position = movement.playerPosition;
+    forwardVector.set(0, 0, -1).applyQuaternion(movement.playerQuaternion); const angle = Math.atan2(forwardVector.x, -forwardVector.z);
+    // 位置、朝向、悬停、太阳和尺寸都没变时不重绘，静止时不占 CPU。
+    const signature = [position.x.toFixed(2), position.z.toFixed(2), angle.toFixed(2), hoverRoomId, expanded, mapCssWidth, settings.planUpAzimuthDeg, sunSystem.current?.azimuthDeg.toFixed(1)].join();
+    if (signature === lastMapSignature) return;
+    lastMapSignature = signature;
+    ctx.clearRect(0, 0, map.width, map.height);
     const mapFontScale = map.width / mapCssWidth;
     const nameCss = expanded ? 13 : 10;
     const areaCss = expanded ? 11 : 9;
@@ -589,8 +642,7 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     ctx.save(); ctx.translate(nx, ny); ctx.rotate(north); ctx.strokeStyle = '#6d8062'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, 10); ctx.lineTo(0, -11); ctx.lineTo(-4, -4); ctx.moveTo(0, -11); ctx.lineTo(4, -4); ctx.stroke(); ctx.restore();
     ctx.font = `${10 * mapFontScale}px "Segoe UI"`; ctx.fillStyle = '#6d8062'; ctx.textAlign = 'left'; ctx.fillText('N', 60, 44);
-    const position = movement.playerPosition; const [px, py] = mapPoint(position.x, -position.z);
-    forwardVector.set(0, 0, -1).applyQuaternion(movement.playerQuaternion); const angle = Math.atan2(forwardVector.x, -forwardVector.z);
+    const [px, py] = mapPoint(position.x, -position.z);
     ctx.save(); ctx.translate(px, py); ctx.rotate(angle);
     ctx.fillStyle = '#71856833'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 30, -Math.PI * .69, -Math.PI * .31); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#54714b'; ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#f7f7ec'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
@@ -639,6 +691,13 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     get('map-toggle').setAttribute('aria-expanded', String(!collapsed));
     get('map-toggle').setAttribute('aria-label', collapsed ? '展开小地图' : '收起小地图');
     updateMap();
+  }
+  function setSunCollapsed(collapsed) {
+    get('sun-panel').classList.toggle('collapsed', collapsed);
+    get('app').classList.toggle('sun-collapsed', collapsed); get('sun-controls').hidden = collapsed;
+    get('sun-toggle').textContent = collapsed ? '+' : '−';
+    get('sun-toggle').setAttribute('aria-expanded', String(!collapsed)); get('sun-toggle').setAttribute('aria-label', collapsed ? '展开日照面板' : '收起日照面板');
+    get('sun-title-text').textContent = collapsed ? '日照' : '看见阳光的轨迹';
   }
   function setMapExpanded(expanded) {
     if (expanded === mapPanel.classList.contains('expanded')) return;
@@ -696,28 +755,35 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     });
     layerFurniture.addEventListener('click', () => { setDimensionLayer('furniture'); layerFurniture.blur(); });
     layerRooms.addEventListener('click', () => { setDimensionLayer('room'); layerRooms.blur(); });
-    canvas.addEventListener('click', () => {
-      if (mobile || !movement.active || movement.overview) return;
-      toggleMeasure(0, 0);
-    });
+    // 按下后几乎没移动才算点击；拖动看四周、双指缩放都不触发。
     canvas.addEventListener('pointerdown', event => {
-      if (!mobile || event.pointerType === 'mouse' || movement.overview) return;
-      tapStart = { id: event.pointerId, x: event.clientX, y: event.clientY, time: performance.now() };
+      if (event.pointerType === 'mouse') {
+        if (event.button !== 0) return;
+        hoverPoint = null; hoverDirty = true;
+      } else {
+        touchPointers.add(event.pointerId);
+        if (touchPointers.size > 1) { multiTouch = true; tapStart = null; return; }
+        multiTouch = false;
+      }
+      // 用事件自带的时间戳：主线程卡顿时处理函数会晚执行，但不该把轻点误判成长按。
+      tapStart = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, mouse: event.pointerType === 'mouse' };
     });
     canvas.addEventListener('pointermove', event => {
+      if (event.pointerType === 'mouse' && !event.buttons) { hoverPoint = { x: event.clientX, y: event.clientY }; hoverDirty = true; }
       if (!tapStart || tapStart.id !== event.pointerId) return;
-      if (Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y) > 10) tapStart = null;
+      if (Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y) > (tapStart.mouse ? 5 : 10)) tapStart = null;
     });
     canvas.addEventListener('pointerup', event => {
+      touchPointers.delete(event.pointerId);
+      if (event.pointerType === 'mouse') { hoverPoint = { x: event.clientX, y: event.clientY }; hoverDirty = true; }
       if (!tapStart || tapStart.id !== event.pointerId) return;
       const tap = tapStart; tapStart = null;
-      if (performance.now() - tap.time > 450) return;
-      if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 10) return;
-      if (!movement.active || movement.overview) return;
-      measureAtEvent(event);
+      if (multiTouch || event.timeStamp - tap.time > (tap.mouse ? 700 : 450)) return;
+      if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > (tap.mouse ? 5 : 10)) return;
+      handleTap(event.clientX, event.clientY);
     });
-    canvas.addEventListener('pointercancel', () => { tapStart = null; });
-    canvas.addEventListener('lostpointercapture', () => { tapStart = null; });
+    canvas.addEventListener('pointercancel', event => { touchPointers.delete(event.pointerId); tapStart = null; });
+    canvas.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') { hoverPoint = null; hoverDirty = true; } });
     roomSelect.addEventListener('change', () => { if (roomSelect.value) { clearMeasure(); movement.teleport(roomSelect.value); roomSelect.value = ''; roomSelect.blur(); } });
     const settingsPanel = get('settings-panel');
     get('settings-button').addEventListener('click', () => { movement.pause(); settingsPanel.hidden = !settingsPanel.hidden; get('settings-button').setAttribute('aria-expanded', String(!settingsPanel.hidden)); });
@@ -730,7 +796,10 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
       saveSettings(); updateSun(); updateMap(); message('日照设置已应用');
     });
     get('settings-reset').addEventListener('click', resetSettings);
-    get('map-toggle').addEventListener('click', () => setMapCollapsed(!mapPanel.classList.contains('collapsed')));
+    get('map-toggle').addEventListener('click', () => {
+      const collapsed = !mapPanel.classList.contains('collapsed');
+      setMapCollapsed(collapsed); saveUiPref('mapCollapsed', collapsed);
+    });
     mapExpand.addEventListener('click', () => { setMapExpanded(!mapPanel.classList.contains('expanded')); mapExpand.blur(); });
     mapBackdrop.addEventListener('click', () => setMapExpanded(false));
     roomTable.addEventListener('toggle', () => { if (roomTable.open) furnitureTable.open = false; });
@@ -752,39 +821,41 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
     });
     window.addEventListener('keydown', event => {
       if (event.key === 'Escape' && mapPanel.classList.contains('expanded')) setMapExpanded(false);
+      if (event.key === 'Escape' && measureItem) clearMeasure();
       if (event.target.closest('input,select,textarea,button')) return;
       if (/^Digit[1-9]$/.test(event.code) && !event.repeat) clearMeasure();
     });
     get('sun-toggle').addEventListener('click', () => {
-      const collapsed = get('sun-panel').classList.toggle('collapsed');
-      get('app').classList.toggle('sun-collapsed', collapsed); get('sun-controls').hidden = collapsed;
-      get('sun-toggle').textContent = collapsed ? '+' : '−';
-      get('sun-toggle').setAttribute('aria-expanded', String(!collapsed)); get('sun-toggle').setAttribute('aria-label', collapsed ? '展开日照面板' : '收起日照面板');
-      get('sun-title-text').textContent = collapsed ? '日照' : '看见阳光的轨迹'; get('sun-toggle').blur();
+      const collapsed = !get('sun-panel').classList.contains('collapsed');
+      setSunCollapsed(collapsed); saveUiPref('sunCollapsed', collapsed); get('sun-toggle').blur();
     });
     slider.addEventListener('pointerdown', () => { movement.pause(); setPlaying(false); });
     slider.addEventListener('input', () => { minutes = Number(slider.value); setPlaying(false); updateSun(); updateMap(); });
     date.addEventListener('pointerdown', () => movement.pause());
     date.addEventListener('change', () => { if (!date.value) { date.setCustomValidity('请选择有效日期'); date.reportValidity(); return; } date.setCustomValidity(''); updateSun(); updateMap(); });
     play.addEventListener('click', () => { togglePlayback(); play.blur(); });
-    for (const panel of document.querySelectorAll('.panel')) panel.addEventListener('pointerdown', event => { if (!movement.overview && event.target.closest('input,select,button')) movement.pause(); });
+    // 手机默认收起小地图，矮屏（横屏手机）再收起日照面板，把画面留给房子；手动切换过就按用户的选择。
+    const prefs = readUiPrefs();
+    if (prefs.mapCollapsed ?? mobile) setMapCollapsed(true);
+    if (prefs.sunCollapsed ?? (mobile && window.innerHeight <= 550)) setSunCollapsed(true);
     updateMapButtons(); updateSun(); updateMap();
   }
 
   function onActive(active) {
-    const walking = active && !movement?.overview;
-    get('app').classList.toggle('walking', walking && !mobile);
-    get('entry-prompt').hidden = active || !!movement?.overview; get('crosshair').hidden = !walking;
-    if (!active) clearMeasure();
+    get('entry-prompt').hidden = active || !!movement?.overview;
+  }
+  function onWalk(target) {
+    setRing(destinationRing, target);
   }
   function onMode(overview, planMode = false) {
     clearMeasure();
     if (!overview && dimensionsVisible) setDimensionsVisible(false);
-    get('app').classList.toggle('walking', !mobile && !overview && movement.active);
     get('mode-text').textContent = overview ? '回到房间' : '鸟瞰全屋';
     get('view-label').textContent = planMode ? '尺寸平面' : overview ? '鸟瞰全屋' : '自由行走';
-    get('entry-prompt').hidden = overview || movement.active; get('crosshair').hidden = overview || !movement.active;
+    get('entry-prompt').hidden = overview || movement.active;
     get('touch-controls').hidden = !mobile || overview; get('desktop-help').hidden = mobile || overview; get('room-name').textContent = overview ? '整套房子' : '客厅'; lastRoomId = null;
+    hoverDirty = true;
+    if (overview && !planMode) message(mobile ? '鸟瞰全屋 · 单指旋转、双指缩放，轻点地面直接走进去' : '鸟瞰全屋 · 拖动旋转、滚轮缩放，点击地面直接走进去');
   }
   function placeDimensionLabels(labels, placed, tanHalfFov, width, height) {
     cameraRight.setFromMatrixColumn(camera.matrixWorld, 0);
@@ -863,21 +934,12 @@ export function createInterface(plan, camera, mobile, scene, invalidate = () => 
       const position = movement.playerPosition; const room = currentRoom(plan, position.x, -position.z);
       if (room?.id !== lastRoomId) { get('room-name').textContent = room?.name || '过道'; lastRoomId = room?.id; }
     }
-    if (!mobile) {
-      aimElapsed += delta;
-      if (aimElapsed >= .12) {
-        aimElapsed = 0;
-        if (!aimCameraKnown || !aimCameraMatrix.equals(camera.matrixWorld)) {
-          aimCameraMatrix.copy(camera.matrixWorld);
-          aimCameraKnown = true;
-          updateAim();
-        }
-      }
-    }
+    hoverElapsed += delta;
+    if ((hoverDirty && hoverElapsed >= .03) || (hoverPoint && hoverElapsed >= .12 && (!hoverCameraKnown || !hoverCameraMatrix.equals(camera.matrixWorld)))) updateHover();
     updateMeasure();
     updateDimensions();
     mapElapsed += delta;
     if (mapElapsed >= .08) { updateMap(); mapElapsed = 0; }
   }
-  return { bind, onActive, onMode, update, message, togglePlayback, get minutes() { return minutes; }, get date() { return date.value; } };
+  return { bind, onActive, onMode, onWalk, update, message, togglePlayback, get minutes() { return minutes; }, get date() { return date.value; } };
 }

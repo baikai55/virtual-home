@@ -1,27 +1,23 @@
-const CACHE = 'virtual-home-v4';
+// 构建时替换为产物内容哈希（见 vite.config.js），新版本激活后删除旧缓存。
+const CACHE = 'virtual-home-__BUILD_VERSION__';
 const ROOT = new URL('./', self.registration.scope).href;
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
-    try {
-      const cache = await caches.open(CACHE);
-      const response = await fetch(ROOT);
-      if (response.ok) {
-        await cache.put(ROOT, response.clone());
-        const html = await response.text();
-        const urls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
-          .map(match => match[1])
-          .filter(url => !url.startsWith('data:'));
-        await Promise.all(urls.map(async url => {
-          try {
-            const absolute = new URL(url, self.registration.scope);
-            if (absolute.origin !== self.location.origin || absolute.pathname.includes('/cdn-cgi/')) return;
-            const asset = await fetch(absolute.href);
-            if (asset.ok) await cache.put(absolute.href, asset);
-          } catch {}
-        }));
-      }
-    } catch {}
+    const cache = await caches.open(CACHE);
+    const response = await fetch(ROOT, { cache: 'no-cache' });
+    if (!response.ok) throw new Error(`首页缓存失败：${response.status}`);
+    const html = await response.clone().text();
+    await cache.put(ROOT, response);
+    const urls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
+      .map(match => new URL(match[1], self.registration.scope))
+      .filter(url => url.protocol !== 'data:' && url.origin === self.location.origin && !url.pathname.includes('/cdn-cgi/'));
+    // 任一资源下载失败就放弃本次安装，旧版本和它的离线缓存继续可用。
+    await Promise.all(urls.map(async url => {
+      const asset = await fetch(url.href);
+      if (!asset.ok) throw new Error(`资源缓存失败：${url.pathname}`);
+      await cache.put(url.href, asset);
+    }));
     await self.skipWaiting();
   })());
 });
